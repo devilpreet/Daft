@@ -226,7 +226,28 @@ from .partition import (
     extract_day_uuid7,
     extract_month_uuid7,
 )
-from .spatial import great_circle_distance
+from .spatial import (
+    great_circle_distance,
+    st_area,
+    st_buffer,
+    st_centroid,
+    st_contains,
+    st_distance,
+    st_geometrytype,
+    st_geohash,
+    st_intersects,
+    st_isvalid,
+    st_length,
+    st_within,
+    st_x,
+    st_y,
+)
+from .spatial_index import (
+    SpatialIndex,
+    build_spatial_index,
+    load_spatial_index,
+    read_parquet_spatial,
+)
 from .str import (
     deserialize,
     try_deserialize,

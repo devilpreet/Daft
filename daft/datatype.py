@@ -173,6 +173,7 @@ class DataType:
         interval: ClassVar[_CallableSingletonDataType]
         python: ClassVar[_CallableSingletonDataType]
         uuid: ClassVar[_CallableSingletonDataType]
+        geometry: ClassVar[_CallableSingletonDataType]
 
     @classmethod
     def infer_from_type(cls, t: type | GenericAlias | UnionType) -> DataType:
@@ -1104,6 +1105,16 @@ class DataType:
         """
         return self._dtype.is_uuid()
 
+    def is_geometry(self) -> builtins.bool:
+        """Check if this is a Geometry type (WKB-encoded geospatial data).
+
+        Examples:
+            >>> import daft
+            >>> dtype = daft.DataType.geometry()
+            >>> assert dtype.is_geometry()
+        """
+        return self._dtype.is_geometry()
+
     def is_string(self) -> builtins.bool:
         """Check if this is a string type.
 
@@ -1637,6 +1648,7 @@ for _simple_name in (
     "interval",
     "python",
     "uuid",
+    "geometry",
 ):
     _DATATYPE_CONSTRUCTOR_SET.add(_simple_name)
     setattr(DataType, _simple_name, _make_simple_singleton(_simple_name))
