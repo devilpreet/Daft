@@ -130,6 +130,7 @@ impl RuntimeStats for WriteStats {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub enum WriteFormat {
     Parquet,
