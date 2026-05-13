@@ -152,6 +152,7 @@ pub struct DaftExecutionConfig {
     pub dynamic_batching_strategy: String,
     pub flight_shuffle_dirs: Vec<String>,
     pub flight_shuffle_compression: Option<String>,
+    pub flight_shuffle_partition_threshold: usize,
     pub enable_multi_glob_path_tasks: bool,
 }
 
@@ -199,6 +200,7 @@ impl Default for DaftExecutionConfig {
             dynamic_batching_strategy: "auto".to_string(),
             flight_shuffle_dirs: vec!["/tmp".to_string()],
             flight_shuffle_compression: Some("lz4".to_string()),
+            flight_shuffle_partition_threshold: 500,
             enable_multi_glob_path_tasks: false,
         }
     }
