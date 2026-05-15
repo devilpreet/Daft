@@ -50,6 +50,7 @@ use crate::{
     join::{
         AsofJoinOperator, CrossJoinOperator, HashJoinOperator, JoinNode, NestedLoopJoinOperator,
         SortMergeJoinOperator,
+        spill::SpillConfig,
     },
     sinks::{
         aggregate::AggregateSink,
@@ -1256,6 +1257,9 @@ fn physical_plan_to_pipeline(
                     true
                 };
 
+                let spill_config = cfg.hash_join_spill_threshold_bytes.map(|threshold| {
+                    SpillConfig::new(threshold, cfg.flight_shuffle_dirs.clone())
+                });
                 let hash_join_op = HashJoinOperator::new(
                     key_schema,
                     build_on.clone(),
@@ -1268,6 +1272,7 @@ fn physical_plan_to_pipeline(
                     right_schema.clone(),
                     common_join_cols,
                     schema.clone(),
+                    spill_config,
                 )?;
                 let build_child_node = physical_plan_to_pipeline(build_child, cfg, ctx, input_senders)?;
                 let probe_child_node = physical_plan_to_pipeline(probe_child, cfg, ctx, input_senders)?;
