@@ -453,6 +453,9 @@ pub enum AggExpr {
     #[display("concat({_0}, delimiter={_1:?})")]
     Concat(ExprRef, Option<String>),
 
+    #[display("string_join({_0}, delimiter={_1:?}, distinct={_2})")]
+    StringJoin(ExprRef, Option<String>, bool),
+
     #[display("median({_0})")]
     Median(ExprRef),
 
@@ -601,6 +604,7 @@ impl AggExpr {
             Self::List(_) => "List",
             Self::Set(_) => "Set",
             Self::Concat(_, _) => "Concat",
+            Self::StringJoin(_, _, _) => "String Join",
             Self::Median(_) => "Median",
             Self::Skew(_) => "Skew",
             Self::MapGroups { .. } => "Map Groups",
@@ -633,6 +637,7 @@ impl AggExpr {
             | Self::List(expr)
             | Self::Set(expr)
             | Self::Concat(expr, _)
+            | Self::StringJoin(expr, _, _)
             | Self::Median(expr)
             | Self::Skew(expr) => expr.name(),
             Self::MapGroups { func: _, inputs } => inputs.first().unwrap().name(),
@@ -741,6 +746,12 @@ impl AggExpr {
                 let child_id = expr.semantic_id(schema);
                 FieldID::new(format!("{child_id}.local_concat(delimiter={delimiter:?})"))
             }
+            Self::StringJoin(expr, delimiter, distinct) => {
+                let child_id = expr.semantic_id(schema);
+                FieldID::new(format!(
+                    "{child_id}.local_string_join(delimiter={delimiter:?},distinct={distinct})"
+                ))
+            }
             Self::Median(expr) => {
                 let child_id = expr.semantic_id(schema);
                 FieldID::new(format!("{child_id}.local_median()"))
@@ -803,6 +814,7 @@ impl AggExpr {
             | Self::List(expr)
             | Self::Set(expr)
             | Self::Concat(expr, _)
+            | Self::StringJoin(expr, _, _)
             | Self::Median(expr)
             | Self::Skew(expr) => vec![expr.clone()],
             Self::MapGroups { func: _, inputs } => inputs.clone(),
@@ -840,6 +852,9 @@ impl AggExpr {
             Self::List(_) => Self::List(first_child()),
             Self::Set(_expr) => Self::Set(first_child()),
             Self::Concat(_, delimiter) => Self::Concat(first_child(), delimiter.clone()),
+            Self::StringJoin(_, delimiter, distinct) => {
+                Self::StringJoin(first_child(), delimiter.clone(), *distinct)
+            }
             Self::Median(_) => Self::Median(first_child()),
             Self::Skew(_) => Self::Skew(first_child()),
             Self::MapGroups { func, inputs: _ } => Self::MapGroups {
@@ -1037,6 +1052,17 @@ impl AggExpr {
                     DataType::Utf8 => Ok(field),
                     _ => Err(DaftError::TypeError(format!(
                         "We can only perform Concat Agg on List or Utf8 types, got dtype {} for column \"{}\"",
+                        field.dtype, field.name
+                    ))),
+                }
+            }
+
+            Self::StringJoin(expr, _, _) => {
+                let field = expr.to_field(schema)?;
+                match field.dtype {
+                    DataType::Utf8 => Ok(field),
+                    _ => Err(DaftError::TypeError(format!(
+                        "We can only perform String Join Agg on Utf8 types, got dtype {} for column \"{}\"",
                         field.dtype, field.name
                     ))),
                 }
@@ -1441,6 +1467,11 @@ impl Expr {
     pub fn agg_concat(self: ExprRef, delimiter: Option<String>) -> ExprRef {
         let delimiter = delimiter.filter(|d| !d.is_empty());
         Self::Agg(AggExpr::Concat(self, delimiter)).into()
+    }
+
+    pub fn string_join(self: ExprRef, delimiter: Option<String>, distinct: bool) -> ExprRef {
+        let delimiter = delimiter.filter(|d| !d.is_empty());
+        Self::Agg(AggExpr::StringJoin(self, delimiter, distinct)).into()
     }
 
     pub fn row_number() -> ExprRef {
