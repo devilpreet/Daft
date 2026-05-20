@@ -235,6 +235,7 @@ impl LogicalPlanToPipelineNodeTranslator {
                 )),
                 left.config().schema.clone(),
                 left,
+                left_stats.size_bytes,
             )?
         } else {
             left
@@ -250,6 +251,7 @@ impl LogicalPlanToPipelineNodeTranslator {
                 )),
                 right.config().schema.clone(),
                 right,
+                right_stats.size_bytes,
             )?
         } else {
             right
