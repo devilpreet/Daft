@@ -202,7 +202,7 @@ impl Default for DaftExecutionConfig {
             enable_dynamic_batching: false,
             dynamic_batching_strategy: "auto".to_string(),
             flight_shuffle_dirs: vec!["/tmp".to_string()],
-            flight_shuffle_compression: Some("lz4".to_string()),
+            flight_shuffle_compression: None,
             flight_shuffle_partition_threshold: 500,
             enable_multi_glob_path_tasks: false,
             hash_join_spill_threshold_bytes: None,
