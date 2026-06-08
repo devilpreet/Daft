@@ -126,6 +126,9 @@ impl PyDaftExecutionConfig {
         flight_shuffle_partition_threshold=None,
         enable_multi_glob_path_tasks=None,
         hash_join_spill_threshold_bytes=None,
+        sort_spill_threshold_bytes=None,
+        agg_spill_threshold_bytes=None,
+        window_spill_threshold_bytes=None,
     ))]
     fn with_config_values(
         &self,
@@ -166,6 +169,9 @@ impl PyDaftExecutionConfig {
         flight_shuffle_partition_threshold: Option<usize>,
         enable_multi_glob_path_tasks: Option<bool>,
         hash_join_spill_threshold_bytes: Option<usize>,
+        sort_spill_threshold_bytes: Option<usize>,
+        agg_spill_threshold_bytes: Option<usize>,
+        window_spill_threshold_bytes: Option<usize>,
     ) -> PyResult<Self> {
         let mut config = self.config.as_ref().clone();
 
@@ -329,6 +335,18 @@ impl PyDaftExecutionConfig {
             config.hash_join_spill_threshold_bytes = Some(hash_join_spill_threshold_bytes);
         }
 
+        if let Some(sort_spill_threshold_bytes) = sort_spill_threshold_bytes {
+            config.sort_spill_threshold_bytes = Some(sort_spill_threshold_bytes);
+        }
+
+        if let Some(agg_spill_threshold_bytes) = agg_spill_threshold_bytes {
+            config.agg_spill_threshold_bytes = Some(agg_spill_threshold_bytes);
+        }
+
+        if let Some(window_spill_threshold_bytes) = window_spill_threshold_bytes {
+            config.window_spill_threshold_bytes = Some(window_spill_threshold_bytes);
+        }
+
         Ok(Self {
             config: Arc::new(config),
         })
@@ -490,6 +508,26 @@ impl PyDaftExecutionConfig {
     #[getter]
     fn enable_multi_glob_path_tasks(&self) -> PyResult<bool> {
         Ok(self.config.enable_multi_glob_path_tasks)
+    }
+
+    #[getter]
+    fn hash_join_spill_threshold_bytes(&self) -> PyResult<Option<usize>> {
+        Ok(self.config.hash_join_spill_threshold_bytes)
+    }
+
+    #[getter]
+    fn sort_spill_threshold_bytes(&self) -> PyResult<Option<usize>> {
+        Ok(self.config.sort_spill_threshold_bytes)
+    }
+
+    #[getter]
+    fn agg_spill_threshold_bytes(&self) -> PyResult<Option<usize>> {
+        Ok(self.config.agg_spill_threshold_bytes)
+    }
+
+    #[getter]
+    fn window_spill_threshold_bytes(&self) -> PyResult<Option<usize>> {
+        Ok(self.config.window_spill_threshold_bytes)
     }
 
     #[getter]

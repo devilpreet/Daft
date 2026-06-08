@@ -2987,6 +2987,7 @@ dependencies = [
  "arrow-array",
  "arrow-buffer 57.3.0",
  "arrow-ipc",
+ "arrow-row",
  "arrow-schema 57.3.0",
  "async-trait",
  "common-checkpoint-config",
