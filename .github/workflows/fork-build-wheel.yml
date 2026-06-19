@@ -1,4 +1,4 @@
-name: Fork — Build Wheels
+name: Fork — Build Linux Wheels
 
 on:
   push:
@@ -37,12 +37,10 @@ jobs:
             runner: ubuntu-latest
             manylinux: "2_28"
             before_script: export JEMALLOC_SYS_WITH_LG_PAGE=16
-          # macOS arm64 (Apple Silicon / AWS Graviton macOS runners)
-          - target: aarch64-apple-darwin
-            runner: macos-14
-          # macOS x86_64 (Intel)
-          - target: x86_64-apple-darwin
-            runner: macos-13
+          # macOS wheels are intentionally excluded.
+          # Deployment target is Linux containers (K8s/Docker); macOS wheels
+          # serve no production purpose. Mac developers use the upstream
+          # PyPI release (pip install daft) for local work.
 
     steps:
       - uses: actions/checkout@v4
