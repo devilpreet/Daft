@@ -24,23 +24,14 @@ jobs:
     name: Build wheel (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
     strategy:
-      fail-fast: false
       matrix:
         include:
-          # Linux x86_64 — standard manylinux_2_28
-          - target: x86_64
-            runner: ubuntu-latest
-            manylinux: "2_28"
-          # Linux aarch64 — manylinux_2_28, QEMU cross-compile on x86_64 host
-          # (jemalloc requires 64 KiB page size on aarch64)
+          # Linux aarch64 only — deployment target is AWS Graviton / arm64 K8s nodes.
+          # x86_64 and macOS wheels are intentionally excluded; use upstream PyPI for those.
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-latest
             manylinux: "2_28"
             before_script: export JEMALLOC_SYS_WITH_LG_PAGE=16
-          # macOS wheels are intentionally excluded.
-          # Deployment target is Linux containers (K8s/Docker); macOS wheels
-          # serve no production purpose. Mac developers use the upstream
-          # PyPI release (pip install daft) for local work.
 
     steps:
       - uses: actions/checkout@v4
