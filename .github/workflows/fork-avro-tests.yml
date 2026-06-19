@@ -42,25 +42,17 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "**/pyproject.toml"
 
-      - name: Create virtualenv
-        run: uv venv --seed .venv
-
       - name: Install Python dev dependencies
-        run: |
-          source .venv/bin/activate
-          uv pip install maturin pytest pandas pyarrow fastavro
+        run: uv pip install maturin pytest pandas pyarrow fastavro
 
       - name: Build Daft (dev profile via maturin develop)
-        run: |
-          source .venv/bin/activate
-          maturin develop --uv
+        run: maturin develop --uv
         env:
           RUSTC_WRAPPER: sccache
 
       - name: Run Avro tests
         run: |
-          source .venv/bin/activate
-          DAFT_RUNNER=native pytest -v \
+          DAFT_RUNNER=native uv run pytest -v \
             tests/io/test_avro.py \
             tests/io/test_avro_write.py \
             tests/io/test_avro_tar.py
