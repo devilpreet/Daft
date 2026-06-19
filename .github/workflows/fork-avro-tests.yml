@@ -21,6 +21,9 @@ env:
   DAFT_ANALYTICS_ENABLED: "0"
   RUST_BACKTRACE: "1"
   DAFT_PROGRESS_BAR: "0"
+  # maturin develop --uv uses the PEP 517 release profile; build.rs panics
+  # in release mode without pre-built npm assets. Skip dashboard for tests.
+  DAFT_DASHBOARD_SKIP_BUILD: "1"
 
 jobs:
   avro-tests:

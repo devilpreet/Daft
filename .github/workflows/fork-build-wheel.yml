@@ -52,6 +52,7 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: false  # maturin runs in Docker; uv never installs host packages
 
       - name: Set up Node + build dashboard
         uses: actions/setup-node@v4
