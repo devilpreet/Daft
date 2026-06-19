@@ -4,7 +4,7 @@ use common_error::{DaftError, DaftResult};
 use daft_core::join::JoinSide;
 use daft_dsl::{ExprRef, expr::bound_expr::BoundExpr, is_exact_partition_match, is_partition_compatible};
 use daft_logical_plan::{
-    JoinStrategy, JoinType,
+    ClusteringSpec, JoinStrategy, JoinType,
     ops::Join,
     partitioning::{HashRepartitionConfig, RepartitionSpec},
     stats::ApproxStats,

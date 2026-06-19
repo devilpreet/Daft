@@ -2616,6 +2616,20 @@ pub fn is_exact_partition_match(a: &[BoundExpr], b: &[BoundExpr]) -> bool {
     a_set == b_set
 }
 
+/// Returns true when the set of `partition_cols` equals the set of `join_cols`.
+///
+/// Used by distributed spatial-join planning to decide whether existing hash
+/// partitioning already aligns with the join keys, comparing partition
+/// expressions (as `BoundExpr`) against join key expressions (as `ExprRef`).
+pub fn is_partition_compatible<'a>(
+    partition_cols: &[BoundExpr],
+    join_cols: impl Iterator<Item = &'a ExprRef>,
+) -> bool {
+    let partition_set: HashSet<&ExprRef> = partition_cols.iter().map(|e| e.inner()).collect();
+    let join_set: HashSet<&ExprRef> = join_cols.collect();
+    partition_set == join_set
+}
+
 /// Returns true when two range-partition specs are identical: same keys position-by-position,
 /// the same sort direction per key, and the same null placement per key.
 ///

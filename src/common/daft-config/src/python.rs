@@ -534,11 +534,6 @@ impl PyDaftExecutionConfig {
     fn flight_shuffle_compression(&self) -> PyResult<Option<&str>> {
         Ok(self.config.flight_shuffle_compression.as_deref())
     }
-
-    #[getter]
-    fn hash_join_spill_threshold_bytes(&self) -> PyResult<Option<usize>> {
-        Ok(self.config.hash_join_spill_threshold_bytes)
-    }
 }
 
 impl_bincode_py_state_serialization!(PyDaftExecutionConfig);
