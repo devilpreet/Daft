@@ -1,0 +1,70 @@
+name: Fork — Avro Tests
+
+on:
+  push:
+    branches:
+      - feature/avro-tar-support
+  pull_request:
+    branches:
+      - feature/avro-tar-support
+
+# Cancel in-progress runs for outdated pushes on the same ref.
+concurrency:
+  group: fork-avro-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.11"
+  DAFT_ANALYTICS_ENABLED: "0"
+  RUST_BACKTRACE: "1"
+  DAFT_PROGRESS_BAR: "0"
+
+jobs:
+  avro-tests:
+    name: avro-tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up sccache
+        uses: Mozilla-Actions/sccache-action@v0.0.5
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+
+      - name: Set up Python + uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: "**/pyproject.toml"
+
+      - name: Create virtualenv
+        run: uv venv --seed .venv
+
+      - name: Install Python dev dependencies
+        run: |
+          source .venv/bin/activate
+          uv pip install maturin pytest pandas pyarrow fastavro
+
+      - name: Build Daft (dev profile via maturin develop)
+        run: |
+          source .venv/bin/activate
+          maturin develop --uv
+        env:
+          RUSTC_WRAPPER: sccache
+
+      - name: Run Avro tests
+        run: |
+          source .venv/bin/activate
+          DAFT_RUNNER=native pytest -v \
+            tests/io/test_avro.py \
+            tests/io/test_avro_write.py \
+            tests/io/test_avro_tar.py
+
+      - name: sccache stats
+        if: always()
+        run: sccache --show-stats

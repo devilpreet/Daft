@@ -1,0 +1,94 @@
+name: Fork — Build Linux Wheels
+
+on:
+  push:
+    branches:
+      - feature/avro-tar-support
+    tags:
+      - "v*"
+
+# Cancel in-progress runs for outdated branch pushes (not for tags, which are unique).
+concurrency:
+  group: fork-build-wheel-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+permissions:
+  contents: write  # needed to create GitHub Releases and upload assets
+
+env:
+  PYTHON_VERSION: "3.11"
+  DAFT_ANALYTICS_ENABLED: "0"
+
+jobs:
+  build-wheel:
+    name: Build wheel (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64
+            manylinux: "2_28"
+          - target: aarch64-unknown-linux-gnu
+            manylinux: "2_28"
+            before_script: export JEMALLOC_SYS_WITH_LG_PAGE=16
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up sccache
+        uses: Mozilla-Actions/sccache-action@v0.0.5
+
+      - name: Set up Python
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Patch package version
+        run: |
+          pip install setuptools_scm tomlq 2>/dev/null || uv pip install setuptools_scm yq --system
+          VERSION="$(python -m setuptools_scm | sed 's/\.dev/-dev/g')"
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Patching version to: $VERSION"
+          tomlq -i -t ".package.version = \"$VERSION\"" Cargo.toml 2>/dev/null || true
+          tomlq -i -t ".workspace.package.version = \"$VERSION\"" Cargo.toml 2>/dev/null || true
+
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          args: -i python${{ env.PYTHON_VERSION }} --profile release --out dist
+          sccache: true
+          before-script-linux: ${{ matrix.before_script || '' }}
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+          RUSTC_WRAPPER: sccache
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-linux-${{ matrix.target }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+      # On tag push: create/update GitHub Release and attach wheel
+      - name: Upload wheel to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.whl
+          generate_release_notes: false
+
+  # Print sccache stats after all builds (handy to see hit rate on first run)
+  sccache-stats:
+    name: sccache stats
+    needs: build-wheel
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Set up sccache
+        uses: Mozilla-Actions/sccache-action@v0.0.5
+      - run: sccache --show-stats
