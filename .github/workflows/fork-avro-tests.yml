@@ -21,9 +21,7 @@ env:
   DAFT_ANALYTICS_ENABLED: "0"
   RUST_BACKTRACE: "1"
   DAFT_PROGRESS_BAR: "0"
-  # maturin develop --uv uses the PEP 517 release profile; build.rs panics
-  # in release mode without pre-built npm assets. Skip dashboard for tests.
-  DAFT_DASHBOARD_SKIP_BUILD: "1"
+
 
 jobs:
   avro-tests:
@@ -49,7 +47,11 @@ jobs:
         run: uv pip install maturin pytest pandas pyarrow fastavro
 
       - name: Build Daft (dev profile via maturin develop)
-        run: maturin develop --uv
+        # Use 'maturin develop' WITHOUT --uv so cargo compiles with the dev
+        # profile (debug_assertions=true). This skips the dashboard panic
+        # automatically and cuts compile time vs release (~2× faster).
+        # VIRTUAL_ENV is set by setup-uv; maturin finds the venv via it.
+        run: maturin develop
         env:
           RUSTC_WRAPPER: sccache
 
