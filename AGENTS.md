@@ -1,3 +1,24 @@
+# Fork-specific Context
+
+This is **devilpreet/Daft**, a personal maintained fork of Eventual-Inc/Daft.
+
+- **Fork owner:** `devilpreet` (GitHub account)
+- **Team fork:** `anshulgoel27/Daft` — pull spatial join, delta lake, spill-to-disk, and SQL function commits from here occasionally
+- **Primary branch:** `feature/avro-tar-support` (33+ commits ahead of upstream/main)
+- **Key additions over upstream:**
+  - `daft.read_avro` / `daft.write_avro` — Avro file I/O (src/daft-avro/)
+  - `daft.read_avro_tar()` — streaming Avro from `.tar.gz` archives (daft/io/avro_tar/)
+  - Spatial join (daft.functions.spatial), delta lake merge, spill-to-disk, geo functions
+- **Wheel builds happen on GitHub Actions only** — never run `make build-whl` locally
+- **Avro tests after any avro change:**
+  ```
+  DAFT_RUNNER=native make test EXTRA_ARGS="-v tests/io/test_avro.py tests/io/test_avro_write.py tests/io/test_avro_tar.py"
+  ```
+- **Remotes:** `origin` → devilpreet/Daft, `upstream` → Eventual-Inc/Daft, `anshulgoel27` → anshulgoel27/Daft
+- **Python env:** `uv pip install` (not pip). venv at `.venv`.
+
+---
+
 # Resources
 
 - https://docs.daft.ai for the user-facing API docs
