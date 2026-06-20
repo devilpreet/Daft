@@ -21,6 +21,12 @@ env:
   DAFT_ANALYTICS_ENABLED: "0"
   RUST_BACKTRACE: "1"
   DAFT_PROGRESS_BAR: "0"
+  # build.rs dispatches to ci_main() when GITHUB_ACTIONS=true.
+  # ci_main skips the npm dashboard build when cfg!(debug_assertions)||DAFT_DASHBOARD_SKIP_BUILD.
+  # However [profile.dev.build-override] opt-level=3 causes build scripts to compile
+  # without debug_assertions even in a dev build, so cfg!(debug_assertions) is always
+  # false in build.rs on CI. DAFT_DASHBOARD_SKIP_BUILD is therefore required.
+  DAFT_DASHBOARD_SKIP_BUILD: "1"
 
 
 jobs:
@@ -47,10 +53,9 @@ jobs:
         run: uv pip install maturin pytest pandas pyarrow fastavro
 
       - name: Build Daft (dev profile via maturin develop)
-        # Use 'maturin develop' WITHOUT --uv so cargo compiles with the dev
-        # profile (debug_assertions=true). This skips the dashboard panic
-        # automatically and cuts compile time vs release (~2× faster).
+        # 'maturin develop' without --uv uses the dev/debug Rust profile.
         # VIRTUAL_ENV is set by setup-uv; maturin finds the venv via it.
+        # Dashboard build is skipped via DAFT_DASHBOARD_SKIP_BUILD (see env above).
         run: maturin develop
         env:
           RUSTC_WRAPPER: sccache
