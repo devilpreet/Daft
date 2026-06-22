@@ -4,6 +4,7 @@ use arrow_array::Array;
 use arrow_avro::{compression::CompressionCodec, writer::WriterBuilder};
 use arrow_schema::{DataType as ArrowDataType, Field as ArrowField, Schema as ArrowSchema};
 use daft_recordbatch::{RecordBatch, get_column_by_name};
+use log::debug;
 
 use crate::{AvroCompression, AvroError, AvroWriteOptions, Result};
 
@@ -78,6 +79,10 @@ pub fn write_record_batch_to_avro(
 ) -> Result<Vec<u8>> {
     let daft_schema = record_batch.schema.clone();
     let num_rows = record_batch.num_rows();
+    debug!(
+        "write_record_batch_to_avro: {} row(s), compression={}",
+        num_rows, options.compression
+    );
 
     // Convert Daft schema to Arrow schema
     let arrow_schema =
@@ -161,6 +166,7 @@ pub fn write_record_batch_to_avro(
         drop(writer);
     }
 
+    debug!("write_record_batch_to_avro: serialized {} byte(s)", output.len());
     Ok(output)
 }
 

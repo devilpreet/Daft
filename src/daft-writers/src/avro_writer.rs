@@ -6,6 +6,7 @@ use daft_avro::{AvroCompression, AvroWriteOptions, write_record_batch_to_avro};
 use daft_io::IOConfig;
 use daft_micropartition::MicroPartition;
 use daft_recordbatch::RecordBatch;
+use log::{debug, info};
 
 use crate::{AsyncFileWriter, WriteResult};
 
@@ -102,6 +103,7 @@ impl AsyncFileWriter for NativeAvroWriter {
         // overwriting previous writes (Avro OCF has a single schema header).
         self.batches.push(table);
         self.rows_written += rows;
+        debug!("NativeAvroWriter::write: accumulated {} row(s) (total so far: {})", rows, self.rows_written);
 
         Ok(WriteResult {
             bytes_written: 0,
@@ -121,6 +123,10 @@ impl AsyncFileWriter for NativeAvroWriter {
         self.bytes_written = avro_bytes.len();
 
         let file_path = self.file_path()?;
+        debug!(
+            "NativeAvroWriter::close: writing {} row(s) / {} byte(s) to {}",
+            self.rows_written, self.bytes_written, file_path
+        );;
         // Ensure parent directory exists for local file writes.
         if let Some(parent) = std::path::Path::new(&file_path).parent()
             && let Some(local_path) = parent.to_str()
@@ -139,6 +145,8 @@ impl AsyncFileWriter for NativeAvroWriter {
             .single_url_put(&file_path, data, None)
             .await
             .map_err(|e| common_error::DaftError::External(e.into()))?;
+
+        info!("NativeAvroWriter: wrote {} row(s) to {}", self.rows_written, file_path);
 
         // Return a RecordBatch containing the file path
         use daft_core::prelude::*;

@@ -5,6 +5,7 @@ use arrow_avro::reader::ReaderBuilder;
 use arrow_schema::Schema as ArrowSchema;
 use daft_recordbatch::RecordBatch;
 use futures::StreamExt;
+use log::debug;
 
 use crate::{AvroError, Result, schema::arrow_type_to_daft_type};
 
@@ -16,6 +17,7 @@ pub async fn read_avro(
     column_projection: Option<Vec<String>>,
     max_records: Option<usize>,
 ) -> Result<RecordBatch> {
+    debug!("read_avro: uri={uri} column_projection={column_projection:?} max_records={max_records:?}");
     let get_result = io_client
         .single_url_get(uri.to_string(), None, io_stats)
         .await
@@ -48,6 +50,7 @@ pub async fn read_avro(
         })?;
 
     let arrow_schema = reader.schema();
+    debug!("read_avro: {uri} — schema has {} field(s)", arrow_schema.fields().len());
 
     // Collect all Arrow RecordBatches
     let mut batches: Vec<ArrowRecordBatch> = Vec::new();
@@ -73,6 +76,7 @@ pub async fn read_avro(
     }
 
     if batches.is_empty() {
+        debug!("read_avro: {uri} — 0 rows (empty file)");
         let daft_schema = arrow_schema_to_daft_schema(&arrow_schema)?;
         return Ok(RecordBatch::empty(Some(Arc::new(daft_schema))));
     }
@@ -81,6 +85,7 @@ pub async fn read_avro(
     let combined = arrow::compute::concat_batches(&arrow_schema, batches.iter())
         .map_err(|e| AvroError::ArrowError { source: e })?;
 
+    debug!("read_avro: {uri} — {} row(s) read", combined.num_rows());
     // Convert to Daft RecordBatch
     arrow_batch_to_daft(&combined, &arrow_schema, column_projection.as_ref())
 }
