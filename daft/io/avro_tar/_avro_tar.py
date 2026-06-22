@@ -11,6 +11,19 @@ from typing import TYPE_CHECKING
 import daft
 
 logger = logging.getLogger(__name__)
+
+try:
+    import fastavro as _fastavro
+
+    _FASTAVRO_AVAILABLE = True
+except ImportError:
+    _fastavro = None  # type: ignore[assignment]
+    _FASTAVRO_AVAILABLE = False
+    logger.debug(
+        "fastavro not installed — using temp-file fallback for Avro member reads. "
+        "Install fastavro for faster in-memory reads: pip install fastavro"
+    )
+
 from daft.api_annotations import PublicAPI
 from daft.daft import io_glob
 from daft.daft import read_avro as _rust_read_avro
@@ -83,6 +96,74 @@ def _list_tar_gz_files(path: str, io_config: IOConfig | None) -> list[str]:
     ]
     logger.debug("Directory '%s' contains %d .tar.gz / .tgz file(s)", path, len(results))
     return results
+
+
+def _read_avro_member_to_recordbatch(
+    avro_bytes: bytes,
+    *,
+    column_names: list[str] | None,
+    file_path_column: str | None,
+    source_uri: str,
+) -> RecordBatch | None:
+    """Convert raw Avro bytes to a :class:`RecordBatch`.
+
+    Uses fastavro for in-memory parsing when available (no temp-file I/O).
+    Falls back to writing a NamedTemporaryFile and reading via the Rust Avro reader
+    when fastavro is not installed.
+
+    Returns ``None`` when the Avro member contains 0 rows.
+    """
+    import pyarrow as pa
+
+    if _FASTAVRO_AVAILABLE:
+        # --- fast path: fastavro reads directly from a BytesIO buffer ---
+        with io.BytesIO(avro_bytes) as buf:
+            reader = _fastavro.reader(buf)  # type: ignore[union-attr]
+            records = list(reader)
+
+        if not records:
+            return None
+
+        # Project before building the Arrow table (avoid materialising unused columns)
+        if column_names is not None:
+            col_set = set(column_names)
+            records = [{k: v for k, v in rec.items() if k in col_set} for rec in records]
+
+        # Let PyArrow infer types from the Python dicts; fastavro has already
+        # decoded Avro logical types (e.g. timestamp → datetime, date → date).
+        arrow_table = pa.Table.from_pylist(records)
+
+    else:
+        # --- fallback path: write to a temp file and use the Rust Avro reader ---
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".avro", delete=False) as tmp:
+                tmp.write(avro_bytes)
+                tmp_path = tmp.name
+
+            py_batch = _rust_read_avro(tmp_path, io_config=None, column_projection=column_names)
+            rb = RecordBatch._from_pyrecordbatch(py_batch)
+
+            if column_names is not None:
+                arrow_table = rb.to_arrow_table()
+                arrow_table = arrow_table.select([c for c in column_names if c in arrow_table.schema.names])
+            else:
+                arrow_table = rb.to_arrow_table()
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+
+        if len(arrow_table) == 0:
+            return None
+
+    if file_path_column is not None:
+        n_rows = len(arrow_table)
+        arrow_table = arrow_table.append_column(
+            pa.field(file_path_column, pa.large_string()),
+            pa.array([source_uri] * n_rows, type=pa.large_string()),
+        )
+
+    return RecordBatch.from_arrow_table(arrow_table)
 
 
 def _read_first_avro_schema(tar_gz_path: str, io_config: IOConfig | None) -> Schema:
@@ -281,39 +362,16 @@ class AvroTarSourceTask(DataSourceTask):
                 avro_bytes = extracted.read()
                 avro_member_count += 1
                 logger.debug("Processing member '%s' (%d bytes) from %s", member.name, len(avro_bytes), self._uri)
-                tmp_path = None
                 try:
-                    with tempfile.NamedTemporaryFile(suffix=".avro", delete=False) as tmp:
-                        tmp.write(avro_bytes)
-                        tmp_path = tmp.name
-
-                    # Use the Rust Avro reader via a local tempfile path
-                    py_batch = _rust_read_avro(
-                        tmp_path,
-                        io_config=None,  # tempfile is local, no io_config needed
-                        column_projection=self._column_names,
+                    rb = _read_avro_member_to_recordbatch(
+                        avro_bytes,
+                        column_names=self._column_names,
+                        file_path_column=self._file_path_column,
+                        source_uri=self._uri,
                     )
-                    rb = RecordBatch._from_pyrecordbatch(py_batch)
-
-                    # Apply Python-level column projection as a safety net
-                    if self._column_names is not None:
-                        arrow_table = rb.to_arrow_table()
-                        arrow_table = arrow_table.select(
-                            [c for c in self._column_names if c in arrow_table.schema.names]
-                        )
-                        rb = RecordBatch.from_arrow_table(arrow_table)
-
-                    if self._file_path_column is not None:
-                        import pyarrow as pa
-
-                        n_rows = len(rb)
-                        arrow_table = rb.to_arrow_table()
-                        path_array = pa.array([self._uri] * n_rows, type=pa.large_string())
-                        combined = arrow_table.append_column(
-                            pa.field(self._file_path_column, pa.large_string()),
-                            path_array,
-                        )
-                        rb = RecordBatch.from_arrow_table(combined)
+                    if rb is None:
+                        logger.debug("Member '%s' has 0 rows — skipping", member.name)
+                        continue
 
                     rows = len(rb)
                     total_rows += rows
@@ -322,7 +380,4 @@ class AvroTarSourceTask(DataSourceTask):
                 except Exception:
                     logger.exception("Failed to read Avro member '%s' from %s", member.name, self._uri)
                     raise
-                finally:
-                    if tmp_path and os.path.exists(tmp_path):
-                        os.unlink(tmp_path)
         logger.info("Finished reading %s: %d Avro member(s), %d total row(s)", self._uri, avro_member_count, total_rows)
