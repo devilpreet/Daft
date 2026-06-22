@@ -9,6 +9,15 @@ import pytest
 
 import daft
 
+try:
+    import fastavro as _fastavro_mod  # noqa: F401
+
+    _HAS_FASTAVRO = True
+except ImportError:
+    _HAS_FASTAVRO = False
+
+_requires_fastavro = pytest.mark.skipif(not _HAS_FASTAVRO, reason="fastavro not installed")
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -239,3 +248,75 @@ def test_list_tar_gz_files_preserves_scheme(tmp_path):
         assert not r.startswith("s3://") or r.startswith("file://") or os.path.isabs(r), (
             f"Unexpected scheme in result: {r!r}"
         )
+
+
+@_requires_fastavro
+def test_native_avro_int32_type_enforcement(tmp_path):
+    """External Avro files using native int (32-bit) / float (32-bit) fields must round-trip
+    correctly without dtype widening to int64/float64.
+
+    This exercises the `expected_pa_schema` enforcement in _read_avro_member_to_recordbatch.
+    Uses fastavro to write a native int32 Avro file so we can control the field types
+    independently of Daft's own writer.
+    """
+    import fastavro
+
+    avro_schema = fastavro.parse_schema(
+        {
+            "type": "record",
+            "name": "Row",
+            "fields": [
+                {"name": "id", "type": "int"},  # Avro int = 32-bit
+                {"name": "label", "type": "string"},
+            ],
+        }
+    )
+    records = [{"id": 1, "label": "a"}, {"id": 2, "label": "b"}]
+    buf = io.BytesIO()
+    fastavro.writer(buf, avro_schema, records)
+    avro_bytes = buf.getvalue()
+
+    gz_path = str(tmp_path / "int32.tar.gz")
+    with open(gz_path, "wb") as fh:
+        fh.write(make_tar_gz([("rows.avro", avro_bytes)]))
+
+    df = daft.read_avro_tar(gz_path).sort("id")
+    result = df.to_pydict()
+
+    assert result["id"] == [1, 2]
+    assert result["label"] == ["a", "b"]
+    # Verify no dtype widening: int32 must stay int32 (not become int64)
+    import pyarrow as pa
+
+    rb = df.to_arrow()
+    assert rb.schema.field("id").type == pa.int32(), (
+        f"Expected int32, got {rb.schema.field('id').type} — schema enforcement failed"
+    )
+
+
+@_requires_fastavro
+def test_zero_row_avro_member_is_skipped(tmp_path):
+    """A tar.gz with one zero-row Avro member and one non-empty member must return
+    only the non-empty rows (the empty member is silently skipped)."""
+    import fastavro
+
+    avro_schema = fastavro.parse_schema(
+        {"type": "record", "name": "Row", "fields": [{"name": "val", "type": "long"}]}
+    )
+    # Empty member
+    buf_empty = io.BytesIO()
+    fastavro.writer(buf_empty, avro_schema, [])
+    # Non-empty member
+    buf_data = io.BytesIO()
+    fastavro.writer(buf_data, avro_schema, [{"val": 42}])
+
+    gz_path = str(tmp_path / "mixed.tar.gz")
+    with open(gz_path, "wb") as fh:
+        fh.write(make_tar_gz([("empty.avro", buf_empty.getvalue()), ("data.avro", buf_data.getvalue())]))
+
+    df = daft.read_avro_tar(gz_path)
+    result = df.to_pydict()
+    assert result["val"] == [42]
+
+
+

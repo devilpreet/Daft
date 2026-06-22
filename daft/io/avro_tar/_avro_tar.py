@@ -104,12 +104,20 @@ def _read_avro_member_to_recordbatch(
     column_names: list[str] | None,
     file_path_column: str | None,
     source_uri: str,
+    expected_pa_schema: pa.Schema | None = None,
 ) -> RecordBatch | None:
     """Convert raw Avro bytes to a :class:`RecordBatch`.
 
     Uses fastavro for in-memory parsing when available (no temp-file I/O).
     Falls back to writing a NamedTemporaryFile and reading via the Rust Avro reader
     when fastavro is not installed.
+
+    Args:
+        expected_pa_schema: PyArrow schema (excluding ``file_path_column``) inferred
+            from the first archive's Avro schema via the Rust reader.  When provided,
+            ``pa.Table.from_pylist`` enforces the declared types (e.g. int32, float32)
+            rather than inferring from Python values.  This prevents silent type
+            divergence when the Avro files use native 32-bit ``int``/``float`` fields.
 
     Returns ``None`` when the Avro member contains 0 rows.
     """
@@ -129,9 +137,22 @@ def _read_avro_member_to_recordbatch(
             col_set = set(column_names)
             records = [{k: v for k, v in rec.items() if k in col_set} for rec in records]
 
-        # Let PyArrow infer types from the Python dicts; fastavro has already
-        # decoded Avro logical types (e.g. timestamp → datetime, date → date).
-        arrow_table = pa.Table.from_pylist(records)
+        # Build the Arrow table.  When the expected schema is known, pass it so that
+        # native Avro int/float (32-bit) fields are coerced to the declared types
+        # rather than being widened to int64/float64 by Python value inference.
+        if expected_pa_schema is not None:
+            try:
+                arrow_table = pa.Table.from_pylist(records, schema=expected_pa_schema)
+            except (pa.ArrowInvalid, pa.ArrowTypeError):
+                # Schema enforcement failed (e.g. complex logical types); fall back to
+                # inference.  The caller will see the inferred types instead.
+                logger.debug(
+                    "Schema-enforced from_pylist failed for source '%s'; falling back to type inference",
+                    source_uri,
+                )
+                arrow_table = pa.Table.from_pylist(records)
+        else:
+            arrow_table = pa.Table.from_pylist(records)
 
     else:
         # --- fallback path: write to a temp file and use the Rust Avro reader ---
@@ -342,10 +363,22 @@ class AvroTarSourceTask(DataSourceTask):
         return self._schema
 
     async def read(self) -> AsyncIterator[RecordBatch]:
+        import pyarrow as pa
+
         logger.debug("Reading tar.gz archive: %s", self._uri)
         with daft.open_file(self._uri, "rb", io_config=self._io_config) as f:
             gz_bytes = f.read()
         logger.debug("Downloaded %d bytes from %s", len(gz_bytes), self._uri)
+
+        # Pre-compute the expected data schema (excluding file_path_column) once so
+        # that each member call can enforce consistent Avro → Arrow type mapping.
+        full_pa = self._schema.to_pyarrow_schema()
+        if self._file_path_column and self._file_path_column in full_pa.names:
+            data_pa_schema: pa.Schema | None = pa.schema(
+                [f for f in full_pa if f.name != self._file_path_column]
+            )
+        else:
+            data_pa_schema = full_pa
 
         avro_member_count = 0
         total_rows = 0
@@ -368,6 +401,7 @@ class AvroTarSourceTask(DataSourceTask):
                         column_names=self._column_names,
                         file_path_column=self._file_path_column,
                         source_uri=self._uri,
+                        expected_pa_schema=data_pa_schema,
                     )
                     if rb is None:
                         logger.debug("Member '%s' has 0 rows — skipping", member.name)
