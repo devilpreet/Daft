@@ -204,3 +204,38 @@ def test_distributed_read_ray(tmp_path):
     df = daft.read_avro_tar(gz_files)
     assert df.count_rows() == 4
     assert sorted(df.to_pydict()["val"]) == [0, 10, 20, 30]
+
+
+def test_list_tar_gz_files_preserves_scheme(tmp_path):
+    """_list_tar_gz_files must return the original URI (with scheme), not the
+    scheme-stripped path that _resolve_paths_and_filesystem produces internally.
+
+    Regression test for: non-glob paths passed through _resolve_paths_and_filesystem
+    had their scheme (e.g. s3://) stripped, causing daft.open_file to fail.
+    Uses file:// URIs so the test runs without cloud credentials.
+    """
+    from daft.io.avro_tar._avro_tar import _list_tar_gz_files
+
+    gz_path = str(tmp_path / "test.tar.gz")
+    with open(gz_path, "wb") as fh:
+        fh.write(make_tar_gz([("d.avro", make_avro_bytes({"x": [1]}))]))
+
+    # Plain local path — must be returned unchanged (no scheme added/stripped)
+    results = _list_tar_gz_files(gz_path, io_config=None)
+    assert results == [gz_path], f"Expected [{gz_path!r}], got {results}"
+
+    # file:// URI — scheme must be preserved in the returned URI
+    file_uri = f"file://{gz_path}"
+    results_uri = _list_tar_gz_files(file_uri, io_config=None)
+    assert len(results_uri) == 1
+    assert results_uri[0].startswith("file://"), (
+        f"scheme was stripped: got {results_uri[0]!r}, expected URI starting with 'file://'"
+    )
+
+    # Directory path — all returned URIs must use the same scheme as the input
+    dir_results = _list_tar_gz_files(str(tmp_path), io_config=None)
+    assert len(dir_results) >= 1
+    for r in dir_results:
+        assert not r.startswith("s3://") or r.startswith("file://") or os.path.isabs(r), (
+            f"Unexpected scheme in result: {r!r}"
+        )

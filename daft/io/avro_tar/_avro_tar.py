@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import os
 import tarfile
 import tempfile
@@ -8,11 +9,13 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import daft
+
+logger = logging.getLogger(__name__)
 from daft.api_annotations import PublicAPI
 from daft.daft import io_glob
 from daft.daft import read_avro as _rust_read_avro
 from daft.daft import read_avro_schema as _rust_read_avro_schema
-from daft.filesystem import _resolve_paths_and_filesystem
+from daft.filesystem import _resolve_paths_and_filesystem, get_protocol_from_path
 from daft.io.source import DataSource, DataSourceTask
 from daft.logical.schema import Schema
 from daft.recordbatch import RecordBatch
@@ -29,39 +32,65 @@ def _list_tar_gz_files(path: str, io_config: IOConfig | None) -> list[str]:
     """List all .tar.gz / .tgz files at the given path or matching the given glob pattern."""
     from daft.dependencies import pafs
 
+    logger.debug("Listing .tar.gz files at path: %s", path)
+
     if "*" in path or "?" in path:
         files = io_glob(path, io_config=io_config)
-        return [f["path"] for f in files if f["type"] == "File"]
+        results = [f["path"] for f in files if f["type"] == "File"]
+        logger.debug("Glob '%s' matched %d file(s)", path, len(results))
+        return results
 
+    # Use _resolve_paths_and_filesystem only to get a fs handle and the
+    # scheme-stripped path needed for PyArrow FileSystem calls.
+    # We must NOT return the resolved (scheme-stripped) path as a URI —
+    # daft.open_file requires the full URI including scheme (e.g. s3://).
     [resolved], fs = _resolve_paths_and_filesystem(path, io_config=io_config)
+    protocol = get_protocol_from_path(path)
+
+    def _to_full_uri(stripped: str) -> str:
+        """Re-attach the URI scheme that _resolve_path stripped."""
+        if not protocol or protocol == "file":
+            return stripped
+        return f"{protocol}://{stripped}"
+
     try:
         file_info = fs.get_file_info(resolved)
     except FileNotFoundError:
+        logger.debug("Path not found: %s", path)
         return []
 
     if file_info.type == pafs.FileType.File:
-        return [resolved]
+        # Return the original path (with scheme), not the resolved (scheme-stripped) path.
+        logger.debug("Path is a single file: %s", path)
+        return [path]
     if file_info.type != pafs.FileType.Directory:
         # Covers FileType.NotFound and FileType.Unknown — path does not exist
+        logger.debug("Path is not a file or directory (type=%s): %s", file_info.type, path)
         return []
 
     selector = pafs.FileSelector(resolved, recursive=True)
     try:
         infos = fs.get_file_info(selector)
     except (NotADirectoryError, FileNotFoundError):
+        logger.debug("Directory listing failed for: %s", path)
         return []
 
-    return [
-        fi.path
+    # fi.path from PyArrow is also scheme-stripped; reconstruct full URIs.
+    results = [
+        _to_full_uri(fi.path)
         for fi in infos
         if fi.type == pafs.FileType.File and (fi.path.endswith(".tar.gz") or fi.path.endswith(".tgz"))
     ]
+    logger.debug("Directory '%s' contains %d .tar.gz / .tgz file(s)", path, len(results))
+    return results
 
 
 def _read_first_avro_schema(tar_gz_path: str, io_config: IOConfig | None) -> Schema:
     """Download a tar.gz, extract the first .avro member, and read its Avro schema."""
+    logger.debug("Inferring schema from first .avro member in: %s", tar_gz_path)
     with daft.open_file(tar_gz_path, "rb", io_config=io_config) as f:
         gz_bytes = f.read()
+    logger.debug("Downloaded %d bytes from %s", len(gz_bytes), tar_gz_path)
 
     with tarfile.open(fileobj=io.BytesIO(gz_bytes), mode="r:gz") as tf:
         for member in tf.getmembers():
@@ -71,13 +100,16 @@ def _read_first_avro_schema(tar_gz_path: str, io_config: IOConfig | None) -> Sch
             if extracted is None:
                 continue
             avro_bytes = extracted.read()
+            logger.debug("Using member '%s' (%d bytes) for schema inference", member.name, len(avro_bytes))
             tmp_path = None
             try:
                 with tempfile.NamedTemporaryFile(suffix=".avro", delete=False) as tmp:
                     tmp.write(avro_bytes)
                     tmp_path = tmp.name
                 py_schema = _rust_read_avro_schema(tmp_path)
-                return Schema._from_pyschema(py_schema)
+                schema = Schema._from_pyschema(py_schema)
+                logger.debug("Inferred schema from '%s': %s", member.name, schema)
+                return schema
             finally:
                 if tmp_path and os.path.exists(tmp_path):
                     os.unlink(tmp_path)
@@ -163,7 +195,10 @@ class AvroTarSource(DataSource):
             self._tar_gz_uris.extend(_list_tar_gz_files(p, io_config))
 
         if not self._tar_gz_uris:
+            logger.error("No .tar.gz files found at: %s", paths)
             raise FileNotFoundError(f"No .tar.gz files found at: {paths}")
+
+        logger.info("AvroTarSource: found %d .tar.gz archive(s)", len(self._tar_gz_uris))
 
         # Infer schema from the first archive
         import pyarrow as pa
@@ -183,6 +218,7 @@ class AvroTarSource(DataSource):
             self._schema = base_schema.union(path_col_schema)
         else:
             self._schema = base_schema
+        logger.debug("Final schema: %s", self._schema)
 
     @property
     def name(self) -> str:
@@ -225,18 +261,26 @@ class AvroTarSourceTask(DataSourceTask):
         return self._schema
 
     async def read(self) -> AsyncIterator[RecordBatch]:
+        logger.debug("Reading tar.gz archive: %s", self._uri)
         with daft.open_file(self._uri, "rb", io_config=self._io_config) as f:
             gz_bytes = f.read()
+        logger.debug("Downloaded %d bytes from %s", len(gz_bytes), self._uri)
 
+        avro_member_count = 0
+        total_rows = 0
         with tarfile.open(fileobj=io.BytesIO(gz_bytes), mode="r:gz") as tf:
             for member in tf.getmembers():
                 if not member.name.endswith(".avro") or not member.isfile():
+                    logger.debug("Skipping non-Avro member: %s", member.name)
                     continue
                 extracted = tf.extractfile(member)
                 if extracted is None:
+                    logger.warning("Could not extract member '%s' from %s — skipping", member.name, self._uri)
                     continue
 
                 avro_bytes = extracted.read()
+                avro_member_count += 1
+                logger.debug("Processing member '%s' (%d bytes) from %s", member.name, len(avro_bytes), self._uri)
                 tmp_path = None
                 try:
                     with tempfile.NamedTemporaryFile(suffix=".avro", delete=False) as tmp:
@@ -271,7 +315,14 @@ class AvroTarSourceTask(DataSourceTask):
                         )
                         rb = RecordBatch.from_arrow_table(combined)
 
+                    rows = len(rb)
+                    total_rows += rows
+                    logger.debug("Member '%s' yielded %d row(s)", member.name, rows)
                     yield rb
+                except Exception:
+                    logger.exception("Failed to read Avro member '%s' from %s", member.name, self._uri)
+                    raise
                 finally:
                     if tmp_path and os.path.exists(tmp_path):
                         os.unlink(tmp_path)
+        logger.info("Finished reading %s: %d Avro member(s), %d total row(s)", self._uri, avro_member_count, total_rows)
