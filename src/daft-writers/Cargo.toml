@@ -1,4 +1,5 @@
 [dependencies]
+log = {workspace = true}
 arrow-array = {workspace = true}
 arrow-csv = {workspace = true}
 arrow-ipc = {workspace = true}

@@ -126,7 +126,7 @@ impl AsyncFileWriter for NativeAvroWriter {
         debug!(
             "NativeAvroWriter::close: writing {} row(s) / {} byte(s) to {}",
             self.rows_written, self.bytes_written, file_path
-        );;
+        );
         // Ensure parent directory exists for local file writes.
         if let Some(parent) = std::path::Path::new(&file_path).parent()
             && let Some(local_path) = parent.to_str()
