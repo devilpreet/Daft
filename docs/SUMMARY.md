@@ -58,6 +58,7 @@
         * Files
             * [Files](connectors/files.md)
             * [Text Files](connectors/text.md)
+            * [Avro tar.gz Archives](connectors/avro_tar.md)
             * [Generic File Source Options](connectors/generic-file-source-options.md)
         * Other Sources
             * [Apache Kafka](connectors/kafka.md)
